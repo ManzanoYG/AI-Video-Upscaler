@@ -83,6 +83,7 @@ def profile_key(width, height, factor, model, gpu):
 # ================= MAIN APPLICATION =================
 class UpscaleApp(QWidget):
     cleanup_signal = Signal()
+    open_video_signal = Signal(str)
 
     def __init__(self):
         super().__init__()
@@ -179,6 +180,7 @@ class UpscaleApp(QWidget):
 
         # Connect signal for cleanup popup
         self.cleanup_signal.connect(self.ask_cleanup)
+        self.open_video_signal.connect(self.ask_open_video)
 
     # -------------------- UI FUNCTIONS --------------------
     def toggle_dark(self):
@@ -228,6 +230,21 @@ class UpscaleApp(QWidget):
 
         QTimer.singleShot(0, callback)
 
+    def ask_open_video(self, filepath):
+        reply = QMessageBox.question(
+            self,
+            "Open Video",
+            "Upscaling complete. Do you want to open the video?",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        if reply == QMessageBox.Yes:
+            try:
+                os.startfile(filepath)
+            except Exception as e:
+                print(f"Could not open video: {e}")
+
+        self.cleanup_signal.emit()  # trigger cleanup popup in main thread
+        
     # -------------------- UPSCALING LOGIC --------------------
     def upscale_process(self, video):
         os.makedirs(FRAMES_DIR, exist_ok=True)
@@ -294,9 +311,8 @@ class UpscaleApp(QWidget):
             "-c:v", codec, "-crf","18", "-preset","slow",
             "-pix_fmt","yuv420p", "-c:a","copy", out_file
         ])
-        os.startfile(out_file)
         self.stats_label.setText("✅ Done!")
-        self.cleanup_signal.emit()  # trigger cleanup popup in main thread
+        self.open_video_signal.emit(out_file)
 
 # ================= APP LAUNCH =================
 if __name__ == "__main__":
