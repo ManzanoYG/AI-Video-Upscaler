@@ -65,6 +65,25 @@ def cleanup():
             except Exception as e:
                 print(f"Could not delete folder {folder}: {e}")
 
+def get_possible_resolutions(width, height, factor):
+    """
+    Return a list of resolutions that are possible after upscaling by `factor`.
+    """
+    final_width = width * factor
+    final_height = height * factor
+
+    # List of standard resolutions
+    standard_res = {
+        "HD (720p)": (1280, 720),
+        "Full HD (1080p)": (1920, 1080),
+        "4K (2160p)": (3840, 2160)
+    }
+
+    # Keep only resolutions that are <= final size
+    valid_res = [name for name, (w, h) in standard_res.items()
+                 if w <= final_width and h <= final_height]
+    return valid_res
+
 # ================= GPU PROFILE MANAGEMENT =================
 def load_profiles():
     if os.path.exists(PROFILE_PATH):
@@ -122,6 +141,7 @@ class UpscaleApp(QWidget):
         self.preset_label = QLabel("Preset:")
         self.preset_combo = QComboBox()
         self.preset_combo.addItems(["Anime SD (x4)", "Film SD (x4)", "Fast (x2)"])
+        self.preset_combo.currentIndexChanged.connect(self.update_resolutions)
         preset_layout.addWidget(self.preset_label)
         preset_layout.addWidget(self.preset_combo)
         main_layout.addLayout(preset_layout)
@@ -196,11 +216,31 @@ class UpscaleApp(QWidget):
             """)
         else:
             self.setStyleSheet("")
-
+    def update_resolutions(self):
+        video = self.video_path_label.text()
+        if not os.path.exists(video):
+            return
+        width, height = get_video_resolution(video)
+        preset = self.preset_combo.currentText()
+        factor = 4 if "x4" in preset else 2
+        resolutions = get_possible_resolutions(width, height, factor)
+        self.res_combo.clear()
+        self.res_combo.addItems(resolutions)
+        
     def select_video(self):
         path, _ = QFileDialog.getOpenFileName(self, "Select video", "", "Video files (*.mp4 *.avi *.mkv)")
         if path:
             self.video_path_label.setText(path)
+            width, height = get_video_resolution(path)
+
+            # Determine factor from preset
+            preset = self.preset_combo.currentText()
+            factor = 4 if "x4" in preset else 2
+
+            # Get only resolutions possible after upscale
+            resolutions = get_possible_resolutions(width, height, factor)
+            self.res_combo.clear()
+            self.res_combo.addItems(resolutions)
 
     def start_upscale(self):
         video = self.video_path_label.text()
@@ -244,7 +284,7 @@ class UpscaleApp(QWidget):
                 print(f"Could not open video: {e}")
 
         self.cleanup_signal.emit()  # trigger cleanup popup in main thread
-        
+
     # -------------------- UPSCALING LOGIC --------------------
     def upscale_process(self, video):
         os.makedirs(FRAMES_DIR, exist_ok=True)
