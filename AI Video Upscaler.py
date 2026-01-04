@@ -160,6 +160,10 @@ class UpscaleApp(QWidget):
         # Main layout
         main_layout = QVBoxLayout()
 
+# --- Stats display ---
+        self.stats_label = QLabel("Stats: Waiting...")
+        main_layout.addWidget(self.stats_label)
+        
         # --- Video selection ---
         video_layout = QHBoxLayout()
         self.video_label = QLabel("Video:")
@@ -238,9 +242,7 @@ class UpscaleApp(QWidget):
         self.progress = QProgressBar()
         main_layout.addWidget(self.progress)
 
-        # --- Stats display ---
-        self.stats_label = QLabel("Stats: Waiting...")
-        main_layout.addWidget(self.stats_label)
+        
 
         # --- Start / Cancel buttons ---
         btn_layout = QHBoxLayout()
@@ -356,6 +358,8 @@ class UpscaleApp(QWidget):
 
         # Extract frames
         self.stats_label.setText("Extracting frames...")
+        self.progress.setValue(0)
+        QApplication.processEvents()
         run_command([FFMPEG, "-y", "-i", video, f"{FRAMES_DIR}\\frame_%06d.png"])
         total_frames = count_png(FRAMES_DIR)
 
@@ -394,8 +398,6 @@ class UpscaleApp(QWidget):
                 # Force x4 for film content as there's no x2 model
                 factor = 4
             model = "realesrgan-x4plus"
-        
-        self.stats_label.setText(f"Using x{factor} upscale with {model}...")
 
         # GPU selection
         gpu_sel = self.gpu_combo.currentText()
@@ -404,6 +406,15 @@ class UpscaleApp(QWidget):
         start_time = time.time()
         processed = 0
         window = []
+        ema_spf = None  # Exponential moving average for seconds per frame
+        alpha = 0.3  # EMA smoothing factor (higher = more weight to recent values)
+        last_processed = 0
+        last_check_time = start_time
+
+        # Initialize display
+        self.stats_label.setText(f"Starting upscale (x{factor} with {model})...")
+        self.progress.setValue(0)
+        QApplication.processEvents()
 
         proc = subprocess.Popen([
             exec_file, "-i", FRAMES_DIR, "-o", UPSCALED_DIR,
@@ -415,18 +426,68 @@ class UpscaleApp(QWidget):
                 proc.terminate()
                 self.stats_label.setText("❌ Cancelled")
                 return
+            
+            current_time = time.time()
             processed = count_png(UPSCALED_DIR)
-            elapsed = time.time() - start_time
-            spf_live = elapsed / (processed + 1)
-            window.append(spf_live)
-            if len(window) > 20: window.pop(0)
-            spf_avg = sum(window)/len(window)
-            fps = processed / elapsed
-            eta = int(spf_avg * (total_frames - processed))
-            self.stats_label.setText(f"Frames: {processed}/{total_frames} | FPS: {fps:.2f} | ETA: {eta//60}m {eta%60}s")
-            self.progress.setValue(int(processed / total_frames * 100))
-            self.fps_data.append(fps)
-            self.plot_line.setData(self.fps_data)
+            elapsed = current_time - start_time
+            
+            # Update speed metrics only when new frames are processed
+            if processed > last_processed:
+                # Calculate instantaneous speed
+                frames_delta = processed - last_processed
+                time_delta = current_time - last_check_time
+                instant_spf = time_delta / frames_delta if frames_delta > 0 else 0
+                
+                # Update exponential moving average
+                if ema_spf is None:
+                    ema_spf = instant_spf
+                else:
+                    ema_spf = alpha * instant_spf + (1 - alpha) * ema_spf
+                
+                # Also keep rolling window for backup
+                window.append(instant_spf)
+                if len(window) > 50:  # Increased window size for stability
+                    window.pop(0)
+                
+                last_processed = processed
+                last_check_time = current_time
+            
+            # Calculate and display statistics (always update display)
+            fps = processed / elapsed if elapsed > 0 else 0
+            
+            # Use EMA for ETA calculation (more accurate than simple average)
+            remaining_frames = total_frames - processed
+            if ema_spf and ema_spf > 0:
+                eta_seconds = int(ema_spf * remaining_frames)
+            elif window:
+                # Fallback to windowed average
+                spf_avg = sum(window) / len(window)
+                eta_seconds = int(spf_avg * remaining_frames)
+            else:
+                # Initial estimation before any frames are processed
+                eta_seconds = 0
+            
+            # Format ETA nicely
+            if eta_seconds >= 3600:  # More than 1 hour
+                eta_str = f"{eta_seconds//3600}h {(eta_seconds%3600)//60}m"
+            elif eta_seconds >= 60:  # More than 1 minute
+                eta_str = f"{eta_seconds//60}m {eta_seconds%60}s"
+            else:
+                eta_str = f"{eta_seconds}s"
+            
+            # Display progress (always update, even if no new frames)
+            progress_pct = (processed / total_frames * 100) if total_frames > 0 else 0
+            self.stats_label.setText(
+                f"Frames: {processed}/{total_frames} ({progress_pct:.1f}%) | "
+                f"FPS: {fps:.2f} | ETA: {eta_str}"
+            )
+            self.progress.setValue(int(progress_pct))
+            
+            # Update graph only when there's new data
+            if fps > 0:
+                self.fps_data.append(fps)
+                self.plot_line.setData(self.fps_data)
+            
             QApplication.processEvents()
             time.sleep(0.4)
 
@@ -455,6 +516,8 @@ class UpscaleApp(QWidget):
         out_file = os.path.join(os.path.dirname(video), out_file_name)
 
         self.stats_label.setText("Rebuilding video...")
+        self.progress.setValue(100)
+        QApplication.processEvents()
         run_command([
             FFMPEG, 
             "-framerate", str(fps_orig),
