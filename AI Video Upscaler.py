@@ -362,6 +362,16 @@ class UpscaleApp(QWidget):
             QApplication.processEvents()
             time.sleep(0.4)
 
+        # Restore original framerate
+        fps_orig = get_video_framerate(video)
+        # Retrieve selected final resolution
+        res_text = self.res_combo.currentText()
+        res_dict = {"HD (720p)": (1280,720), "Full HD (1080p)": (1920,1080), "4K (2160p)": (3840,2160)}
+        final_w, final_h = res_dict.get(res_text, (1920,1080))
+
+        # Retrieve output file title and name
+        title_meta = self.title_input.text() or "Upscaled Video"
+
         # Recompose video
         fmt = self.format_combo.currentText()
         ext, codec = {
@@ -371,19 +381,12 @@ class UpscaleApp(QWidget):
             "MKV (H.265 / HEVC)": ("mkv","libx265")
         }[fmt]
 
-        # Restore original framerate
-        fps_orig = get_video_framerate(video)
-        # Retrieve selected final resolution
-        res_text = self.res_combo.currentText()
-        res_dict = {"HD (720p)": (1280,720), "Full HD (1080p)": (1920,1080), "4K (2160p)": (3840,2160)}
-        final_w, final_h = res_dict.get(res_text, (1920,1080))
-
-
-        # Retrieve output file title and name
-        title_meta = self.title_input.text() or "Upscaled Video"
-        out_file_name = self.output_input.text() or os.path.splitext(os.path.basename(video))[0] + "_upscaled"
-        out_file = os.path.join(os.path.dirname(video), f"{out_file_name}.{ext}")
-
+        # --- construct final filename with resolution and codec ---
+        res_short = res_text.split("(")[-1].replace(")","")  # "1080p"
+        codec_short = "h264" if "H.264" in fmt else "h265"
+        base_name = self.output_input.text() or os.path.splitext(os.path.basename(video))[0]
+        out_file_name = f"{base_name} - {res_short} - {codec_short}.{ext}"
+        out_file = os.path.join(os.path.dirname(video), out_file_name)
 
         self.stats_label.setText("Rebuilding video...")
         run_command([
