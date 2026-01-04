@@ -248,7 +248,7 @@ def calculate_optimal_scale(source_width, source_height, target_width, target_he
 ## 📝 Future Improvements
 
 - [ ] Automatic multi-GPU support
-- [ ] Before/after preview
+- [x] Before/after preview
 - [ ] Batch processing
 - [ ] Persistent GPU performance profiles
 - [ ] Subtitle support

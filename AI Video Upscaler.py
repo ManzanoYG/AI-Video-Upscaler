@@ -184,7 +184,7 @@ class PreviewDialog(QDialog):
         self.before_label = QLabel()
         self.before_label.setAlignment(Qt.AlignCenter)
         self.before_scroll.setWidget(self.before_label)
-        self.before_scroll.setWidgetResizable(True)
+        self.before_scroll.setWidgetResizable(False)  # Allow manual scrolling
         before_layout.addWidget(self.before_scroll)
         images_layout.addLayout(before_layout)
         
@@ -195,11 +195,18 @@ class PreviewDialog(QDialog):
         self.after_label = QLabel()
         self.after_label.setAlignment(Qt.AlignCenter)
         self.after_scroll.setWidget(self.after_label)
-        self.after_scroll.setWidgetResizable(True)
+        self.after_scroll.setWidgetResizable(False)  # Allow manual scrolling
         after_layout.addWidget(self.after_scroll)
         images_layout.addLayout(after_layout)
         
         layout.addLayout(images_layout)
+        
+        # Synchronize scrollbars
+        self.sync_scrolling = True
+        self.before_scroll.horizontalScrollBar().valueChanged.connect(self.sync_horizontal_before)
+        self.before_scroll.verticalScrollBar().valueChanged.connect(self.sync_vertical_before)
+        self.after_scroll.horizontalScrollBar().valueChanged.connect(self.sync_horizontal_after)
+        self.after_scroll.verticalScrollBar().valueChanged.connect(self.sync_vertical_after)
         
         # Close button
         close_btn = QPushButton("Close")
@@ -228,6 +235,30 @@ class PreviewDialog(QDialog):
     def on_spinbox_changed(self, value):
         self.frame_slider.setValue(value)
     
+    def sync_horizontal_before(self, value):
+        if self.sync_scrolling:
+            self.sync_scrolling = False
+            self.after_scroll.horizontalScrollBar().setValue(value)
+            self.sync_scrolling = True
+    
+    def sync_vertical_before(self, value):
+        if self.sync_scrolling:
+            self.sync_scrolling = False
+            self.after_scroll.verticalScrollBar().setValue(value)
+            self.sync_scrolling = True
+    
+    def sync_horizontal_after(self, value):
+        if self.sync_scrolling:
+            self.sync_scrolling = False
+            self.before_scroll.horizontalScrollBar().setValue(value)
+            self.sync_scrolling = True
+    
+    def sync_vertical_after(self, value):
+        if self.sync_scrolling:
+            self.sync_scrolling = False
+            self.before_scroll.verticalScrollBar().setValue(value)
+            self.sync_scrolling = True
+    
     def update_preview(self, frame_num):
         self.frame_spinbox.setValue(frame_num)
         
@@ -255,13 +286,17 @@ class PreviewDialog(QDialog):
                 Qt.KeepAspectRatio, Qt.SmoothTransformation
             )
             self.before_label.setPixmap(scaled_before)
+            self.before_label.adjustSize()
             
             # Display after image at its native size
             self.after_label.setPixmap(after_pixmap)
+            self.after_label.adjustSize()
         elif before_pixmap:
             self.before_label.setPixmap(before_pixmap)
+            self.before_label.adjustSize()
         elif after_pixmap:
             self.after_label.setPixmap(after_pixmap)
+            self.after_label.adjustSize()
 
 # ================= MAIN APPLICATION =================
 class UpscaleApp(QWidget):
