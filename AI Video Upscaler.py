@@ -5,7 +5,7 @@ import time
 import json
 import shutil
 from PySide6.QtWidgets import (
-    QApplication, QWidget, QPushButton, QVBoxLayout, QHBoxLayout,
+    QApplication, QLineEdit, QWidget, QPushButton, QVBoxLayout, QHBoxLayout,
     QLabel, QComboBox, QProgressBar, QFileDialog, QMessageBox
 )
 from PySide6.QtCore import Qt, QTimer, Signal
@@ -83,6 +83,17 @@ def get_possible_resolutions(width, height, factor):
     valid_res = [name for name, (w, h) in standard_res.items()
                  if w <= final_width and h <= final_height]
     return valid_res
+
+def get_video_framerate(video_path):
+    cmd = [
+        FFPROBE, "-v", "error",
+        "-select_streams", "v:0",
+        "-show_entries", "stream=avg_frame_rate",
+        "-of", "csv=p=0", video_path
+    ]
+    result = subprocess.run(cmd, stdout=subprocess.PIPE, text=True)
+    num, denom = map(int, result.stdout.strip().split("/"))
+    return num / denom
 
 # ================= GPU PROFILE MANAGEMENT =================
 def load_profiles():
@@ -166,6 +177,24 @@ class UpscaleApp(QWidget):
         format_layout.addWidget(self.format_combo)
         main_layout.addLayout(format_layout)
 
+        # Title input
+        title_layout = QHBoxLayout()
+        self.title_label = QLabel("Metadata Title:")
+        self.title_input = QLineEdit()
+        self.title_input.setText("Upscaled Video")
+        title_layout.addWidget(self.title_label)
+        title_layout.addWidget(self.title_input)
+        main_layout.addLayout(title_layout)
+
+        # Output filename input
+        output_layout = QHBoxLayout()
+        self.output_label = QLabel("Output filename:")
+        self.output_input = QLineEdit()
+        self.output_input.setText("video_upscaled")
+        output_layout.addWidget(self.output_label)
+        output_layout.addWidget(self.output_input)
+        main_layout.addLayout(output_layout)
+
         # --- Dark mode toggle ---
         self.dark_btn = QPushButton("Toggle Dark Mode")
         self.dark_btn.clicked.connect(self.toggle_dark)
@@ -226,7 +255,7 @@ class UpscaleApp(QWidget):
         resolutions = get_possible_resolutions(width, height, factor)
         self.res_combo.clear()
         self.res_combo.addItems(resolutions)
-        
+
     def select_video(self):
         path, _ = QFileDialog.getOpenFileName(self, "Select video", "", "Video files (*.mp4 *.avi *.mkv)")
         if path:
@@ -341,15 +370,38 @@ class UpscaleApp(QWidget):
             "MP4 (H.265 / HEVC)": ("mp4","libx265"),
             "MKV (H.265 / HEVC)": ("mkv","libx265")
         }[fmt]
-        out_file = os.path.splitext(video)[0] + "_upscaled." + ext
+
+        # Restore original framerate
+        fps_orig = get_video_framerate(video)
+        # Retrieve selected final resolution
+        res_text = self.res_combo.currentText()
+        res_dict = {"HD (720p)": (1280,720), "Full HD (1080p)": (1920,1080), "4K (2160p)": (3840,2160)}
+        final_w, final_h = res_dict.get(res_text, (1920,1080))
+
+
+        # Retrieve output file title and name
+        title_meta = self.title_input.text() or "Upscaled Video"
+        out_file_name = self.output_input.text() or os.path.splitext(os.path.basename(video))[0] + "_upscaled"
+        out_file = os.path.join(os.path.dirname(video), f"{out_file_name}.{ext}")
+
+
         self.stats_label.setText("Rebuilding video...")
         run_command([
-            FFMPEG, "-framerate","25",
+            FFMPEG, 
+            "-framerate", str(fps_orig),
             "-i", f"{UPSCALED_DIR}\\frame_%06d.png",
-            "-i", video, "-map","0:v","-map","1:a?",
-            "-vf", "scale=-1:-1,setsar=1",
-            "-c:v", codec, "-crf","18", "-preset","slow",
-            "-pix_fmt","yuv420p", "-c:a","copy", out_file
+            "-i", video, 
+            "-map","0:v",           # upscaled video
+            "-map","1:a?",          # audio if present
+            "-map_metadata","1",    # Copy the source metadata
+            "-metadata", f"title={title_meta}",
+            "-vf", f"scale={final_w}:{final_h}:flags=lanczos,setsar=1",
+            "-c:v", codec, 
+            "-crf","18", 
+            "-preset","slow",
+            "-pix_fmt","yuv420p", 
+            "-c:a","copy", 
+            out_file
         ])
         self.stats_label.setText("✅ Done!")
         self.open_video_signal.emit(out_file)
