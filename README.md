@@ -252,7 +252,7 @@ def calculate_optimal_scale(source_width, source_height, target_width, target_he
 - [ ] Batch processing
 - [ ] Persistent GPU performance profiles
 - [ ] Subtitle support
-- [ ] More accurate time remaining estimation
+- [x] More accurate time remaining estimation
 - [ ] Quality comparison interface
 
 ## 📄 License
