@@ -6,9 +6,11 @@ import json
 import shutil
 from PySide6.QtWidgets import (
     QApplication, QLineEdit, QWidget, QPushButton, QVBoxLayout, QHBoxLayout,
-    QLabel, QComboBox, QProgressBar, QFileDialog, QMessageBox
+    QLabel, QComboBox, QProgressBar, QFileDialog, QMessageBox, QDialog,
+    QScrollArea, QSlider, QSpinBox
 )
 from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtGui import QPixmap, QImage
 import pyqtgraph as pg
 
 # ================= CONFIGURATION =================
@@ -144,6 +146,123 @@ def profile_key(width, height, factor, model, gpu):
     kind = "anime" if "anime" in model else "film"
     return f"{gpu}_{width}x{height}_x{factor}_{kind}"
 
+# ================= PREVIEW DIALOG =================
+class PreviewDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Before/After Preview")
+        self.resize(1400, 800)
+        self.frames_dir = FRAMES_DIR
+        self.upscaled_dir = UPSCALED_DIR
+        
+        layout = QVBoxLayout()
+        
+        # Frame selector
+        selector_layout = QHBoxLayout()
+        selector_layout.addWidget(QLabel("Frame:"))
+        self.frame_slider = QSlider(Qt.Horizontal)
+        self.frame_slider.setMinimum(1)
+        self.frame_slider.setMaximum(1)
+        self.frame_slider.valueChanged.connect(self.update_preview)
+        selector_layout.addWidget(self.frame_slider)
+        
+        self.frame_spinbox = QSpinBox()
+        self.frame_spinbox.setMinimum(1)
+        self.frame_spinbox.setMaximum(1)
+        self.frame_spinbox.valueChanged.connect(self.on_spinbox_changed)
+        selector_layout.addWidget(self.frame_spinbox)
+        
+        layout.addLayout(selector_layout)
+        
+        # Images display
+        images_layout = QHBoxLayout()
+        
+        # Before (original)
+        before_layout = QVBoxLayout()
+        before_layout.addWidget(QLabel("Before (Original)", alignment=Qt.AlignCenter))
+        self.before_scroll = QScrollArea()
+        self.before_label = QLabel()
+        self.before_label.setAlignment(Qt.AlignCenter)
+        self.before_scroll.setWidget(self.before_label)
+        self.before_scroll.setWidgetResizable(True)
+        before_layout.addWidget(self.before_scroll)
+        images_layout.addLayout(before_layout)
+        
+        # After (upscaled)
+        after_layout = QVBoxLayout()
+        after_layout.addWidget(QLabel("After (Upscaled)", alignment=Qt.AlignCenter))
+        self.after_scroll = QScrollArea()
+        self.after_label = QLabel()
+        self.after_label.setAlignment(Qt.AlignCenter)
+        self.after_scroll.setWidget(self.after_label)
+        self.after_scroll.setWidgetResizable(True)
+        after_layout.addWidget(self.after_scroll)
+        images_layout.addLayout(after_layout)
+        
+        layout.addLayout(images_layout)
+        
+        # Close button
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(self.accept)
+        layout.addWidget(close_btn)
+        
+        self.setLayout(layout)
+        
+        # Load available frames
+        self.load_frames()
+        
+    def load_frames(self):
+        if os.path.exists(self.frames_dir) and os.path.exists(self.upscaled_dir):
+            frame_count = count_png(self.frames_dir)
+            upscaled_count = count_png(self.upscaled_dir)
+            
+            if frame_count > 0 and upscaled_count > 0:
+                max_frames = min(frame_count, upscaled_count)
+                self.frame_slider.setMaximum(max_frames)
+                self.frame_spinbox.setMaximum(max_frames)
+                self.frame_slider.setValue(max_frames // 2)  # Start at middle frame
+                return
+        
+        QMessageBox.warning(self, "No Frames", "No frames available for preview. Start upscaling first.")
+    
+    def on_spinbox_changed(self, value):
+        self.frame_slider.setValue(value)
+    
+    def update_preview(self, frame_num):
+        self.frame_spinbox.setValue(frame_num)
+        
+        # Load before image
+        before_path = os.path.join(self.frames_dir, f"frame_{frame_num:06d}.png")
+        before_pixmap = None
+        if os.path.exists(before_path):
+            before_pixmap = QPixmap(before_path)
+        
+        # Load after image
+        after_path = os.path.join(self.upscaled_dir, f"frame_{frame_num:06d}.png")
+        after_pixmap = None
+        if os.path.exists(after_path):
+            after_pixmap = QPixmap(after_path)
+        
+        # Display both images at the same visual size (scaled from the upscaled version)
+        if before_pixmap and after_pixmap:
+            # Use the upscaled dimensions as target size for both
+            target_width = after_pixmap.width()
+            target_height = after_pixmap.height()
+            
+            # Scale before image to match after size
+            scaled_before = before_pixmap.scaled(
+                target_width, target_height,
+                Qt.KeepAspectRatio, Qt.SmoothTransformation
+            )
+            self.before_label.setPixmap(scaled_before)
+            
+            # Display after image at its native size
+            self.after_label.setPixmap(after_pixmap)
+        elif before_pixmap:
+            self.before_label.setPixmap(before_pixmap)
+        elif after_pixmap:
+            self.after_label.setPixmap(after_pixmap)
+
 # ================= MAIN APPLICATION =================
 class UpscaleApp(QWidget):
     cleanup_signal = Signal()
@@ -163,7 +282,7 @@ class UpscaleApp(QWidget):
 # --- Stats display ---
         self.stats_label = QLabel("Stats: Waiting...")
         main_layout.addWidget(self.stats_label)
-        
+
         # --- Video selection ---
         video_layout = QHBoxLayout()
         self.video_label = QLabel("Video:")
@@ -244,14 +363,17 @@ class UpscaleApp(QWidget):
 
         
 
-        # --- Start / Cancel buttons ---
+        # --- Start / Cancel / Preview buttons ---
         btn_layout = QHBoxLayout()
         self.start_btn = QPushButton("Start")
         self.start_btn.clicked.connect(self.start_upscale)
         self.cancel_btn = QPushButton("Cancel")
         self.cancel_btn.clicked.connect(self.cancel)
+        self.preview_btn = QPushButton("Preview")
+        self.preview_btn.clicked.connect(self.show_preview)
         btn_layout.addWidget(self.start_btn)
         btn_layout.addWidget(self.cancel_btn)
+        btn_layout.addWidget(self.preview_btn)
         main_layout.addLayout(btn_layout)
 
         # --- FPS graph ---
@@ -318,6 +440,31 @@ class UpscaleApp(QWidget):
 
     def cancel(self):
         self.cancel_requested = True
+
+    def show_preview(self):
+        # Check if frames exist
+        if not os.path.exists(FRAMES_DIR) or not os.path.exists(UPSCALED_DIR):
+            QMessageBox.warning(
+                self,
+                "No Preview Available",
+                "No frames available for preview. Start upscaling first to generate preview frames."
+            )
+            return
+        
+        # Check if there are actual frames
+        if count_png(FRAMES_DIR) == 0 or count_png(UPSCALED_DIR) == 0:
+            QMessageBox.warning(
+                self,
+                "No Preview Available",
+                "No frames available for preview. Wait for upscaling to process some frames."
+            )
+            return
+        
+        # Show preview dialog
+        dialog = PreviewDialog(self)
+        if self.dark_mode:
+            dialog.setStyleSheet(self.styleSheet())
+        dialog.exec()
 
     def ask_cleanup(self):
         # Show popup in UI thread
