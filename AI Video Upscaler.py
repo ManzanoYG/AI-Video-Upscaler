@@ -95,6 +95,27 @@ def get_video_framerate(video_path):
     num, denom = map(int, result.stdout.strip().split("/"))
     return num / denom
 
+def calculate_optimal_scale(source_width, source_height, target_width, target_height):
+    """
+    Calculate optimal upscale factor to avoid mosaic effect.
+    Returns the scale factor (2 or 4) that gives the best result.
+    """
+    # Calculate required scale ratios
+    width_ratio = target_width / source_width
+    height_ratio = target_height / source_height
+    required_scale = max(width_ratio, height_ratio)
+    
+    # Choose scale factor that minimizes downscaling after upscale
+    if required_scale <= 1.5:
+        # Target is close to source, use x2 to avoid excessive upscaling
+        return 2
+    elif required_scale <= 2.5:
+        # x2 is sufficient
+        return 2
+    else:
+        # Need x4 for best quality
+        return 4
+
 # ================= GPU PROFILE MANAGEMENT =================
 def load_profiles():
     if os.path.exists(PROFILE_PATH):
@@ -147,11 +168,11 @@ class UpscaleApp(QWidget):
         gpu_layout.addWidget(self.gpu_combo)
         main_layout.addLayout(gpu_layout)
 
-        # --- Preset selection ---
+        # --- Content type selection ---
         preset_layout = QHBoxLayout()
-        self.preset_label = QLabel("Preset:")
+        self.preset_label = QLabel("Content Type:")
         self.preset_combo = QComboBox()
-        self.preset_combo.addItems(["Anime SD (x4)", "Film SD (x4)", "Fast (x2)"])
+        self.preset_combo.addItems(["Anime", "Film / Real-world"])
         self.preset_combo.currentIndexChanged.connect(self.update_resolutions)
         preset_layout.addWidget(self.preset_label)
         preset_layout.addWidget(self.preset_combo)
@@ -250,11 +271,13 @@ class UpscaleApp(QWidget):
         if not os.path.exists(video):
             return
         width, height = get_video_resolution(video)
-        preset = self.preset_combo.currentText()
-        factor = 4 if "x4" in preset else 2
+        # Show all resolutions larger than source
+        factor = 4  # Use max factor to show all possible resolutions
         resolutions = get_possible_resolutions(width, height, factor)
         self.res_combo.clear()
         self.res_combo.addItems(resolutions)
+        if resolutions:
+            self.res_combo.setCurrentIndex(0)
 
     def select_video(self):
         path, _ = QFileDialog.getOpenFileName(self, "Select video", "", "Video files (*.mp4 *.avi *.mkv)")
@@ -262,14 +285,13 @@ class UpscaleApp(QWidget):
             self.video_path_label.setText(path)
             width, height = get_video_resolution(path)
 
-            # Determine factor from preset
-            preset = self.preset_combo.currentText()
-            factor = 4 if "x4" in preset else 2
-
-            # Get only resolutions possible after upscale
+            # Show all possible resolutions (using max factor)
+            factor = 4
             resolutions = get_possible_resolutions(width, height, factor)
             self.res_combo.clear()
             self.res_combo.addItems(resolutions)
+            if resolutions:
+                self.res_combo.setCurrentIndex(0)
 
     def start_upscale(self):
         video = self.video_path_label.text()
@@ -324,10 +346,31 @@ class UpscaleApp(QWidget):
         run_command([FFMPEG, "-y", "-i", video, f"{FRAMES_DIR}\\frame_%06d.png"])
         total_frames = count_png(FRAMES_DIR)
 
-        # Preset and scale factor
-        preset = self.preset_combo.currentText()
-        factor = 4 if "x4" in preset else 2
-        model = "realesrgan-x4plus-anime" if "Anime" in preset else "realesrgan-x4plus"
+        # Get source resolution
+        source_width, source_height = get_video_resolution(video)
+        
+        # Get target resolution
+        res_text = self.res_combo.currentText()
+        res_dict = {"HD (720p)": (1280,720), "Full HD (1080p)": (1920,1080), "4K (2160p)" : (3840,2160)}
+        target_width, target_height = res_dict.get(res_text, (1920,1080))
+        
+        # Calculate optimal scale factor automatically
+        factor = calculate_optimal_scale(source_width, source_height, target_width, target_height)
+        
+        # Choose model based on content type and scale factor
+        content_type = self.preset_combo.currentText()
+        if "Anime" in content_type:
+            # realesr-animevideov3 supports x2, x3, x4
+            model = "realesr-animevideov3"
+        else:
+            # realesrgan-x4plus only supports x4
+            # If we need x2, we'll use x4 and downscale less aggressively
+            if factor == 2:
+                # Force x4 for film content as there's no x2 model
+                factor = 4
+            model = "realesrgan-x4plus"
+        
+        self.stats_label.setText(f"Using x{factor} upscale with {model}...")
 
         # GPU selection
         gpu_sel = self.gpu_combo.currentText()
@@ -364,10 +407,8 @@ class UpscaleApp(QWidget):
 
         # Restore original framerate
         fps_orig = get_video_framerate(video)
-        # Retrieve selected final resolution
-        res_text = self.res_combo.currentText()
-        res_dict = {"HD (720p)": (1280,720), "Full HD (1080p)": (1920,1080), "4K (2160p)": (3840,2160)}
-        final_w, final_h = res_dict.get(res_text, (1920,1080))
+        # Use the target resolution already calculated
+        final_w, final_h = target_width, target_height
 
         # Retrieve output file title and name
         title_meta = self.title_input.text() or "Upscaled Video"
