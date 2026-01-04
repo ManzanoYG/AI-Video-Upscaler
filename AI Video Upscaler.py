@@ -67,21 +67,34 @@ def cleanup():
 
 def get_possible_resolutions(width, height, factor):
     """
-    Return a list of resolutions that are possible after upscaling by `factor`.
+    Return a list of resolutions that are above the source resolution.
     """
+    # Extended list of standard resolutions (ordered from smallest to largest)
+    standard_res = [
+        ("480p (SD)", (854, 480)),
+        ("540p (qHD)", (960, 540)),
+        ("HD (720p)", (1280, 720)),
+        ("HD+ (900p)", (1600, 900)),
+        ("Full HD (1080p)", (1920, 1080)),
+        ("QHD (1440p)", (2560, 1440)),
+        ("QHD+ (1800p)", (3200, 1800)),
+        ("4K UHD (2160p)", (3840, 2160)),
+        ("5K (2880p)", (5120, 2880)),
+        ("6K (3160p)", (6144, 3160)),
+        ("8K UHD (4320p)", (7680, 4320))
+    ]
+
+    # Calculate max possible resolution after upscaling
     final_width = width * factor
     final_height = height * factor
 
-    # List of standard resolutions
-    standard_res = {
-        "HD (720p)": (1280, 720),
-        "Full HD (1080p)": (1920, 1080),
-        "4K (2160p)": (3840, 2160)
-    }
-
-    # Keep only resolutions that are <= final size
-    valid_res = [name for name, (w, h) in standard_res.items()
-                 if w <= final_width and h <= final_height]
+    # Keep only resolutions that are:
+    # 1. Larger than source (both width AND height must be larger)
+    # 2. Achievable after upscaling (within the upscaled dimensions)
+    valid_res = [name for name, (w, h) in standard_res
+                 if w > width and h > height  # Larger than source
+                 and w <= final_width and h <= final_height]  # Within upscaled size
+    
     return valid_res
 
 def get_video_framerate(video_path):
@@ -351,8 +364,20 @@ class UpscaleApp(QWidget):
         
         # Get target resolution
         res_text = self.res_combo.currentText()
-        res_dict = {"HD (720p)": (1280,720), "Full HD (1080p)": (1920,1080), "4K (2160p)" : (3840,2160)}
-        target_width, target_height = res_dict.get(res_text, (1920,1080))
+        res_dict = {
+            "480p (SD)": (854, 480),
+            "540p (qHD)": (960, 540),
+            "HD (720p)": (1280, 720),
+            "HD+ (900p)": (1600, 900),
+            "Full HD (1080p)": (1920, 1080),
+            "QHD (1440p)": (2560, 1440),
+            "QHD+ (1800p)": (3200, 1800),
+            "4K UHD (2160p)": (3840, 2160),
+            "5K (2880p)": (5120, 2880),
+            "6K (3160p)": (6144, 3160),
+            "8K UHD (4320p)": (7680, 4320)
+        }
+        target_width, target_height = res_dict.get(res_text, (1920, 1080))
         
         # Calculate optimal scale factor automatically
         factor = calculate_optimal_scale(source_width, source_height, target_width, target_height)
